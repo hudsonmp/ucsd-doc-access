@@ -1,0 +1,9 @@
+{
+  "name": "ucsd-doc-access",
+  "version": "1.0.0",
+  "description": "Copy UCSD Google Docs to personal Drive",
+  "type": "module",
+  "dependencies": {
+    "googleapis": "^134.0.0"
+  }
+}

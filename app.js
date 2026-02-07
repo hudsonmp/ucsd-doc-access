@@ -1,68 +1,33 @@
-// Google API client
-let gapiInited = false;
-let gisInited = false;
-let tokenClient;
-let accessToken = null;
+// Frontend-only Google Drive copier using hardcoded access token
 
-// Initialize Google API
-function gapiLoaded() {
-    gapi.load('client', initializeGapiClient);
-}
+let gapi;
 
-async function initializeGapiClient() {
-    try {
-        await gapi.client.init({
-            apiKey: CONFIG.API_KEY,
-            discoveryDocs: CONFIG.DISCOVERY_DOCS,
-        });
-        gapiInited = true;
-        maybeEnableButtons();
-    } catch (err) {
-        showStatus('Error loading Google API: ' + err.message, 'error');
-    }
-}
+// Load Google API
+function loadGoogleAPI() {
+    return new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = 'https://apis.google.com/js/api.js';
+        script.onload = () => {
+            gapi = window.gapi;
+            gapi.load('client', async () => {
+                await gapi.client.init({
+                    apiKey: CONFIG.API_KEY || '',
+                    discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest']
+                });
 
-// Initialize Google Identity Services
-function gisLoaded() {
-    tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CONFIG.CLIENT_ID,
-        scope: CONFIG.SCOPES,
-        callback: '', // defined later
+                // Set the access token
+                if (CONFIG.ACCESS_TOKEN && CONFIG.ACCESS_TOKEN !== 'PASTE_ACCESS_TOKEN_HERE') {
+                    gapi.client.setToken({ access_token: CONFIG.ACCESS_TOKEN });
+                }
+
+                resolve();
+            });
+        };
+        document.head.appendChild(script);
     });
-    gisInited = true;
-    maybeEnableButtons();
 }
 
-function maybeEnableButtons() {
-    if (gapiInited && gisInited) {
-        document.getElementById('authorizeButton').disabled = false;
-    }
-}
-
-// Handle authorization
-function handleAuthClick() {
-    tokenClient.callback = async (resp) => {
-        if (resp.error !== undefined) {
-            showStatus('Authorization error: ' + resp.error, 'error');
-            return;
-        }
-        accessToken = resp.access_token;
-        gapi.client.setToken({access_token: accessToken});
-
-        showStatus('Successfully authenticated!', 'success');
-        document.getElementById('authSection').classList.add('hidden');
-        document.getElementById('mainSection').classList.remove('hidden');
-    };
-
-    if (gapi.client.getToken() === null) {
-        tokenClient.requestAccessToken({prompt: 'consent'});
-    } else {
-        tokenClient.requestAccessToken({prompt: ''});
-    }
-}
-
-// Extract file ID from URL
-function getFileIdFromUrl(url) {
+function extractFileId(url) {
     const patterns = [
         /\/d\/([a-zA-Z0-9-_]+)/,
         /id=([a-zA-Z0-9-_]+)/,
@@ -71,14 +36,21 @@ function getFileIdFromUrl(url) {
 
     for (const pattern of patterns) {
         const match = url.match(pattern);
-        if (match) {
-            return match[1];
-        }
+        if (match) return match[1];
     }
     return null;
 }
 
-// Copy the document
+function getMimeTypeLabel(mimeType) {
+    const types = {
+        'application/vnd.google-apps.document': 'Google Doc',
+        'application/vnd.google-apps.spreadsheet': 'Google Sheet',
+        'application/vnd.google-apps.presentation': 'Google Slides',
+        'application/vnd.google-apps.folder': 'Folder'
+    };
+    return types[mimeType] || 'File';
+}
+
 async function copyDocument() {
     const url = document.getElementById('docUrl').value.trim();
     const newName = document.getElementById('newName').value.trim();
@@ -88,14 +60,22 @@ async function copyDocument() {
         return;
     }
 
-    const fileId = getFileIdFromUrl(url);
+    // Check if access token is configured
+    if (!CONFIG.ACCESS_TOKEN || CONFIG.ACCESS_TOKEN === 'PASTE_ACCESS_TOKEN_HERE') {
+        showStatus('Error: Access token not configured. Check config.js', 'error');
+        return;
+    }
+
+    const fileId = extractFileId(url);
     if (!fileId) {
         showStatus('Invalid URL. Could not extract file ID.', 'error');
         return;
     }
 
     document.getElementById('copyButton').disabled = true;
+    document.getElementById('copyButton').textContent = 'Copying...';
     showStatus('Copying document...', 'info');
+    hideResult();
 
     try {
         // Get original file metadata
@@ -110,28 +90,37 @@ async function copyDocument() {
         showStatus(`Found: ${originalName} (${getMimeTypeLabel(mimeType)})`, 'info');
 
         // Copy the file
-        const copyRequest = {
+        const copiedFile = await gapi.client.drive.files.copy({
             fileId: fileId,
             resource: {
                 name: newName || `Copy of ${originalName}`
             },
             fields: 'id,name,webViewLink'
-        };
+        });
 
-        const copiedFile = await gapi.client.drive.files.copy(copyRequest);
-
-        // Show success
         showStatus('Successfully copied!', 'success');
-        showResult(copiedFile.result);
+        showResult({
+            id: copiedFile.result.id,
+            name: copiedFile.result.name,
+            url: copiedFile.result.webViewLink,
+            originalName: originalName,
+            type: getMimeTypeLabel(mimeType)
+        });
+
+        // Clear inputs
+        document.getElementById('docUrl').value = '';
+        document.getElementById('newName').value = '';
 
     } catch (error) {
         console.error('Error:', error);
         let errorMsg = 'Failed to copy document. ';
 
         if (error.status === 404) {
-            errorMsg += 'File not found or you don\'t have access to it.';
+            errorMsg += 'File not found or not accessible.';
         } else if (error.status === 403) {
-            errorMsg += 'Permission denied. Make sure you have access to this file.';
+            errorMsg += 'Permission denied. Check if the access token has access to this file.';
+        } else if (error.status === 401) {
+            errorMsg += 'Access token expired or invalid. Please refresh the token in config.js';
         } else {
             errorMsg += error.message || 'Unknown error';
         }
@@ -139,10 +128,10 @@ async function copyDocument() {
         showStatus(errorMsg, 'error');
     } finally {
         document.getElementById('copyButton').disabled = false;
+        document.getElementById('copyButton').textContent = 'Copy Document';
     }
 }
 
-// Helper functions
 function showStatus(message, type) {
     const statusEl = document.getElementById('statusMessage');
     statusEl.textContent = message;
@@ -150,41 +139,44 @@ function showStatus(message, type) {
     statusEl.classList.remove('hidden');
 }
 
+function hideResult() {
+    const resultEl = document.getElementById('result');
+    resultEl.classList.add('hidden');
+}
+
 function showResult(file) {
     const resultEl = document.getElementById('result');
     resultEl.innerHTML = `
         <strong>✓ Copy Created!</strong><br>
-        <strong>Name:</strong> ${file.name}<br>
-        <strong>Link:</strong> <a href="${file.webViewLink}" target="_blank">Open in Google Drive</a>
+        <strong>Original:</strong> ${file.originalName} (${file.type})<br>
+        <strong>New Name:</strong> ${file.name}<br>
+        <strong>Link:</strong> <a href="${file.url}" target="_blank" rel="noopener noreferrer">Open in new tab</a>
     `;
     resultEl.classList.remove('hidden');
+
+    // Auto-open in new tab
+    window.open(file.url, '_blank', 'noopener,noreferrer');
 }
 
-function getMimeTypeLabel(mimeType) {
-    const types = {
-        'application/vnd.google-apps.document': 'Google Doc',
-        'application/vnd.google-apps.spreadsheet': 'Google Sheet',
-        'application/vnd.google-apps.presentation': 'Google Slides',
-        'application/vnd.google-apps.folder': 'Folder'
-    };
-    return types[mimeType] || 'File';
-}
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+    showStatus('Loading...', 'info');
 
-// Event listeners
-document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('authorizeButton').addEventListener('click', handleAuthClick);
+    try {
+        await loadGoogleAPI();
+        showStatus('Ready! Paste a document URL to copy.', 'success');
+    } catch (error) {
+        showStatus('Error loading Google API: ' + error.message, 'error');
+    }
+
     document.getElementById('copyButton').addEventListener('click', copyDocument);
 
-    // Load Google API
-    gapiLoaded();
-});
+    // Allow Enter key to submit
+    document.getElementById('docUrl').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') copyDocument();
+    });
 
-// Load Google Identity Services
-if (typeof google !== 'undefined') {
-    gisLoaded();
-} else {
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.onload = gisLoaded;
-    document.head.appendChild(script);
-}
+    document.getElementById('newName').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') copyDocument();
+    });
+});

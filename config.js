@@ -1,15 +1,10 @@
-// Configuration file for Google API credentials
+// Configuration - Your friend's access token goes here
+// NOTE: Access tokens expire after ~1 hour. You'll need to refresh periodically.
 
 const CONFIG = {
-    // OAuth 2.0 Client ID from Google Cloud Console
-    CLIENT_ID: '564225714058-msodmvuk847oabcjenetjdgo18mi0ul1.apps.googleusercontent.com',
+    // Your friend's Google access token (they need to generate this)
+    ACCESS_TOKEN: 'PASTE_ACCESS_TOKEN_HERE',
 
-    // API Key (not provided, but optional)
-    API_KEY: '',
-
-    // Discovery docs for Google Drive API
-    DISCOVERY_DOCS: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
-
-    // Authorization scopes
-    SCOPES: 'https://www.googleapis.com/auth/drive'
+    // API Key (optional, for public API calls)
+    API_KEY: 'PASTE_API_KEY_HERE_IF_AVAILABLE'
 };

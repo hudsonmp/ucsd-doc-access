@@ -2,4 +2,8 @@ token.pickle
 __pycache__/
 *.pyc
 .env
+.env.local
 .DS_Store
+.vercel
+node_modules/
+get-tokens.js
